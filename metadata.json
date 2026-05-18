@@ -1,0 +1,6 @@
+{
+  "name": "Deep Sketch",
+  "description": "A real-time multiplayer drawing and guessing game where friends compete to see who's the best artist and fastest guesser.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
