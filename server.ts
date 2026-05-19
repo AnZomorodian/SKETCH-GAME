@@ -1,10 +1,8 @@
-import express from 'express';
-import { createServer } from 'http';
-import { Server } from 'socket.io';
-import path from 'path';
-import { createServer as createViteServer } from 'vite';
-
-const PORT = 3000;
+import express from "express";
+import path from "path";
+import { createServer } from "http";
+import { Server } from "socket.io";
+import { createServer as createViteServer } from "vite";
 
 interface Player {
   id: string;
@@ -12,30 +10,37 @@ interface Player {
   points: number;
 }
 
-interface GameSettings {
-  roundTime: number;
-  maxPlayers: number;
-  language: 'en' | 'fa';
-  guessingTimeAfterFinish: number;
-  winningPoints: number;
+interface Guess {
+  playerId: string;
+  playerName: string;
+  text: string;
+  isCorrect: boolean;
+  timestamp: number;
 }
 
-interface GameState {
+interface RoomSettings {
+  roundTime: number;
+  maxPlayers: number;
+  language: string;
+  guessingTimeAfterFinish: number;
+  winningPoints: number;
+  difficulty: 'easy' | 'medium' | 'hard';
+}
+
+interface Room {
   id: string;
   hostId: string;
   players: Player[];
   status: 'lobby' | 'playing' | 'round_end' | 'game_over';
-  phase?: 'drawing' | 'guessing';
+  phase: 'drawing' | 'guessing';
   currentDrawerId: string | null;
   currentWord: string | null;
   roundTimeLeft: number;
   isPaused: boolean;
-  guesses: { playerId: string; text: string; isCorrect: boolean }[];
-  drawingData: any[]; // Lines/objects
-  settings: GameSettings;
+  guesses: Guess[];
+  drawingData: any[];
+  settings: RoomSettings;
 }
-
-const rooms = new Map<string, GameState>();
 
 async function startServer() {
   const app = express();
@@ -47,12 +52,9 @@ async function startServer() {
     }
   });
 
-  // API Routes
-  app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok' });
-  });
+  const PORT = 3000;
+  const rooms = new Map<string, Room>();
 
-  // Socket logic
   io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
 
@@ -78,7 +80,8 @@ async function startServer() {
             maxPlayers: 8,
             language: 'en',
             guessingTimeAfterFinish: 45,
-            winningPoints: 1000
+            winningPoints: 1000,
+            difficulty: 'medium'
           }
         };
         rooms.set(roomId, room);
@@ -103,33 +106,32 @@ async function startServer() {
 
     socket.on('update_settings', ({ roomId, settings }) => {
       const room = rooms.get(roomId);
-      if (room && room.hostId === socket.id && room.status === 'lobby') {
-        room.settings = settings;
+      if (room && room.hostId === socket.id) {
+        room.settings = { ...room.settings, ...settings };
         io.to(roomId).emit('room_update', room);
       }
     });
 
-    socket.on('start_game', ({ roomId }) => {
+    socket.on('start_game', (data) => {
+      const roomId = typeof data === 'string' ? data : data.roomId;
       const room = rooms.get(roomId);
-      if (room && room.hostId === socket.id) {
+      if (room && room.hostId === socket.id && room.players.length > 0) {
         startNewRound(roomId);
       }
     });
 
-    socket.on('finish_drawing', ({ roomId }) => {
+    socket.on('toggle_pause', (data) => {
+      const roomId = typeof data === 'string' ? data : data.roomId;
       const room = rooms.get(roomId);
-      if (room && room.currentDrawerId === socket.id && room.status === 'playing' && room.phase === 'drawing') {
-        room.phase = 'guessing';
-        room.roundTimeLeft = room.settings.guessingTimeAfterFinish; 
-        room.isPaused = false; // Auto unpause on phase change
-        io.to(roomId).emit('timer_update', room.roundTimeLeft);
+      if (room && room.hostId === socket.id) {
+        room.isPaused = !room.isPaused;
         io.to(roomId).emit('room_update', room);
       }
     });
 
-    socket.on('toggle_pause', ({ roomId }) => {
+    socket.on('pause_game', (roomId) => {
       const room = rooms.get(roomId);
-      if (room && room.hostId === socket.id && room.status === 'playing') {
+      if (room && room.hostId === socket.id) {
         room.isPaused = !room.isPaused;
         io.to(roomId).emit('room_update', room);
       }
@@ -137,37 +139,104 @@ async function startServer() {
 
     socket.on('draw_event', ({ roomId, drawingData }) => {
       const room = rooms.get(roomId);
-      if (room && room.currentDrawerId === socket.id) {
+      if (room && room.currentDrawerId === socket.id && !room.isPaused) {
         room.drawingData = drawingData;
-        socket.to(roomId).emit('drawing_sync', drawingData);
+        socket.to(roomId).emit('drawing_update', drawingData);
+      }
+    });
+
+    socket.on('draw', ({ roomId, drawData }) => {
+      const room = rooms.get(roomId);
+      if (room && room.currentDrawerId === socket.id && !room.isPaused) {
+        room.drawingData.push(drawData);
+        socket.to(roomId).emit('drawing_update', drawData);
+      }
+    });
+
+    socket.on('finish_drawing', (data) => {
+      const roomId = typeof data === 'string' ? data : data.roomId;
+      const room = rooms.get(roomId);
+      if (room && room.currentDrawerId === socket.id && room.phase === 'drawing') {
+        room.phase = 'guessing';
+        room.roundTimeLeft = room.settings.guessingTimeAfterFinish;
+        io.to(roomId).emit('room_update', room);
+      }
+    });
+
+    socket.on('skip_round', (data) => {
+      const roomId = typeof data === 'string' ? data : data.roomId;
+      const room = rooms.get(roomId);
+      if (room && room.hostId === socket.id) {
+        startNewRound(roomId);
+      }
+    });
+
+    socket.on('reset_points', (data) => {
+      const roomId = typeof data === 'string' ? data : data.roomId;
+      const room = rooms.get(roomId);
+      if (room && room.hostId === socket.id) {
+        room.players.forEach(p => p.points = 0);
+        io.to(roomId).emit('room_update', room);
+      }
+    });
+
+    socket.on('change_drawer', (data) => {
+      const roomId = typeof data === 'string' ? data : data.roomId;
+      const room = rooms.get(roomId);
+      if (room && room.hostId === socket.id) {
+        startNewRound(roomId);
+      }
+    });
+
+    socket.on('clear_canvas', (roomId) => {
+      const room = rooms.get(roomId);
+      if (room && room.currentDrawerId === socket.id) {
+        room.drawingData = [];
+        io.to(roomId).emit('canvas_cleared');
       }
     });
 
     socket.on('guess', ({ roomId, text }) => {
       const room = rooms.get(roomId);
-      if (!room || room.status !== 'playing' || room.phase !== 'guessing' || socket.id === room.currentDrawerId) return;
+      if (room && room.status === 'playing' && socket.id !== room.currentDrawerId) {
+        const player = room.players.find(p => p.id === socket.id);
+        if (!player) return;
 
-      const isCorrect = text.toLowerCase().trim() === room.currentWord?.toLowerCase().trim();
-      const player = room.players.find(p => p.id === socket.id);
-      
-      const guess = { playerId: socket.id, playerName: player?.name, text, isCorrect };
-      room.guesses.push(guess);
-
-      if (isCorrect) {
-        const drawer = room.players.find(p => p.id === room.currentDrawerId);
+        const isCorrect = text.toLowerCase() === room.currentWord?.toLowerCase();
         
-        if (player) player.points += 100;
-        if (drawer) drawer.points += 50;
+        const guess: Guess = {
+          playerId: socket.id,
+          playerName: player.name,
+          text,
+          isCorrect,
+          timestamp: Date.now()
+        };
 
-        io.to(roomId).emit('correct_guess', { 
-          playerId: socket.id, 
-          playerName: player?.name,
-          word: room.currentWord 
-        });
-        
-        endRound(roomId);
-      } else {
+        room.guesses.push(guess);
         io.to(roomId).emit('new_guess', guess);
+
+        if (isCorrect) {
+          // Time-based scoring: Each 10 seconds lost reduces 5 points from base 100
+          const timeElapsed = room.settings.roundTime - room.roundTimeLeft;
+          const timePentalty = Math.floor(timeElapsed / 10) * 5;
+          const pointsEarned = Math.max(50, 100 - timePentalty);
+          
+          player.points += pointsEarned;
+          
+          // Drawer also gets some points
+          const drawer = room.players.find(p => p.id === room.currentDrawerId);
+          if (drawer) {
+            drawer.points += Math.floor(pointsEarned / 2);
+          }
+
+          io.to(roomId).emit('room_update', room);
+          
+          if (room.phase === 'drawing') {
+             room.phase = 'guessing';
+             room.roundTimeLeft = room.settings.guessingTimeAfterFinish;
+             io.to(roomId).emit('room_update', room);
+          }
+        }
       }
     });
 
@@ -209,17 +278,18 @@ async function startServer() {
 
   const timers = new Map<string, NodeJS.Timeout>();
 
-  const faWords = [
-    'سیب', 'خانه', 'ماشین', 'خورشید', 'درخت', 'گربه', 'سگ', 'کوه', 'اقیانوس', 'کامپیوتر', 'پیتزا', 'دوچرخه',
-    'فیل', 'گیتار', 'همبرگر', 'جزیره', 'مشتری', 'کانگورو', 'فانوس دریایی', 'قارچ', 'دفترچه', 'هشت‌پا',
-    'پنگوئن', 'ملکه', 'موشک', 'توت‌فرنگی', 'تلسکوپ', 'چتر', 'آتشفشان', 'نهنگ', 'کزیلوفون', 'قایق تفریحی', 'گورخر',
-    'هواپیما', 'بادکنک', 'قلعه', 'اژدها', 'عقاب', 'گل', 'یخچال طبیعی', 'هلیکوپتر', 'توده یخ', 'جنگل', 'کوالا',
-    'لیمو', 'پری دریایی', 'نینجا', 'شترمرغ', 'دزد دریایی', 'لحاف', 'ربات', 'سفینه فضایی', 'ببر', 'تک‌شاخ', 'ویولن', 'جادوگر',
-    'تخت', 'صندلی', 'میز', 'کمد', 'پنجره', 'در', 'دیوار', 'سقف', 'فرش', 'لامپ', 'کتاب', 'مداد', 'دفتر', 'پاک‌کن', 'کاغذ',
-    'کفش', 'جوراب', 'شلوار', 'پیراهن', 'کلاه', 'عینک', 'ساعت', 'دستبند', 'گردنبند', 'انگشتر', 'گوشواره', 'کیف', 'پول',
-    'نان', 'پنیر', 'کره', 'مربا', 'عسل', 'شیر', 'چای', 'قهوه', 'آب', 'آبغوره', 'سرکه', 'روغن', 'برنج', 'گوشت', 'مرغ', 'ماهی',
-    'لبخند', 'گریه', 'دوست', 'دشمن', 'جوان', 'پیر', 'بزرگ', 'کوچک', 'گرم', 'سرد', 'روشن', 'تاریک', 'خوب', 'بد', 'زشت', 'زیبا'
-  ];
+  const wordsList: any = {
+    en: {
+      easy: ['apple', 'house', 'car', 'sun', 'tree', 'cat', 'dog', 'mountain', 'ocean', 'pizza', 'bike', 'star', 'ball', 'book', 'pen', 'hat', 'shoe', 'fish', 'bird', 'bus', 'bed', 'door', 'box', 'key', 'milk', 'egg', 'cake', 'bag', 'fan', 'pot', 'pan', 'net', 'ink', 'jar', 'log', 'nut', 'oil', 'pin', 'rat', 'tie', 'wig', 'arm', 'leg', 'ear', 'eye', 'lip', 'jaw', 'toe', 'rug', 'tub', 'tap', 'mop', 'axe', 'saw', 'bin', 'can', 'cup', 'mud', 'sky', 'fly', 'ant', 'bee', 'pig', 'cow', 'hen', 'fox', 'duck', 'frog', 'goat', 'deer', 'bear', 'lion', 'wolf', 'crab', 'seal', 'rock', 'sand', 'dirt', 'rain', 'snow', 'wind', 'fire', 'leaf', 'seed', 'root', 'stem', 'bark', 'twig', 'hill', 'cave', 'pond', 'lake', 'sea', 'wave', 'boat', 'flag', 'drum', 'bell', 'ring', 'sofa', 'desk', 'oven', 'sink', 'fork', 'belt', 'comb', 'duck', 'goose', 'swan', 'iron', 'jail', 'kite', 'lamp', 'mask', 'nail', 'pear', 'quack', 'road', 'soap', 'tent', 'unit', 'vase', 'wall', 'yard', 'zero', 'atom', 'base', 'chef', 'dice', 'echo', 'fuel', 'gift', 'hike', 'iron', 'jazz', 'keep', 'mint', 'node', 'otto', 'palm', 'quiz', 'rest', 'salt', 'time', 'user', 'view', 'wild', 'yarn', 'zoom', 'acid', 'bank', 'clay', 'deck', 'exit', 'film', 'gate', 'hulk', 'item', 'junk', 'knot', 'lava', 'maze', 'noon', 'ozon', 'park', 'quid', 'ruby', 'safe', 'tide', 'undo', 'visa', 'west', 'yoga', 'zone', 'army', 'baby', 'cake', 'data', 'east', 'face', 'game', 'hand', 'idea', 'joke', 'kind', 'lamp', 'mail', 'neck', 'open', 'page', 'rain', 'ship', 'test', 'unit', 'verb', 'walk', 'year'],
+      medium: ['elephant', 'guitar', 'hamburger', 'island', 'jupiter', 'kangaroo', 'lighthouse', 'mushroom', 'notebook', 'octopus', 'penguin', 'queen', 'rocket', 'strawberry', 'telescope', 'umbrella', 'volcano', 'whale', 'xylophone', 'yacht', 'zebra', 'airplane', 'balloon', 'castle', 'dragon', 'eagle', 'flower', 'glacier', 'helicopter', 'iceberg', 'jungle', 'koala', 'lemon', 'mermaid', 'ninja', 'ostrich', 'pirate', 'quilt', 'robot', 'spaceship', 'tiger', 'unicorn', 'violin', 'wizard', 'diamond', 'camera', 'laptop', 'bridge', 'rainbow', 'statue', 'palace', 'desert', 'forest', 'swamp', 'tunnel', 'anchor', 'magnet', 'compass', 'puzzle', 'ladder', 'mirror', 'candle', 'hammer', 'wrench', 'shovel', 'bucket', 'shield', 'helmet', 'sword', 'arrow', 'cannon', 'bottle', 'kettle', 'toaster', 'blender', 'fridge', 'pillow', 'blanket', 'curtain', 'wallet', 'pocket', 'button', 'zipper', 'glasses', 'watch', 'phone', 'radio', 'stereo', 'piano', 'trumpet', 'flute', 'drums', 'harp', 'cello', 'banjo', 'organ', 'accordian', 'bagpipes', 'clarinet', 'harmonica', 'oboe', 'saxophone', 'tambourine', 'trombone', 'tuba', 'ukulele', 'whistle', 'amplifier', 'microphone', 'speaker', 'turntable', 'cassette', 'record', 'trophy', 'asteroid', 'backpack', 'calendar', 'dynamite', 'envelope', 'firework', 'gasmask', 'handcuff', 'inkwell', 'keyboard', 'lipstick', 'necklace', 'ointment', 'passport', 'quicksand', 'revolver', 'suitcase', 'unicycle', 'vacation', 'wardrobe', 'yogurt', 'zeppelin', 'abacus', 'battery', 'chamber', 'dolphin', 'eclipse', 'fungus', 'goblin', 'harvest', 'impact', 'jacket', 'knight', 'lantern', 'mansion', 'nebula', 'ocean', 'parade', 'quartz', 'rebound', 'sculpt', 'traffic', 'unique', 'victory', 'weather', 'yogurt'],
+      hard: ['architecture', 'asymptote', 'bacillus', 'caricature', 'dandelion', 'eccentric', 'fluorescence', 'geometry', 'hieroglyph', 'idiosyncrasy', 'juxtaposition', 'kaleidoscope', 'labyrinth', 'metallurgy', 'nebulous', 'oblivion', 'parliament', 'quarantine', 'renaissance', 'silhouette', 'theatrical', 'ubiquitous', 'ventilation', 'wavelength', 'xenophobia', 'yesterday', 'zenith', 'alchemy', 'botany', 'chemistry', 'dinosaurs', 'evolution', 'fossils', 'genetics', 'hologram', 'infinity', 'journalism', 'knowledge', 'literature', 'microscope', 'navigation', 'optics', 'philosophy', 'quantum', 'rhetoric', 'sociology', 'taxonomy', 'universe', 'velocity', 'weather', 'yearbook', 'zoology', 'abstract', 'baroque', 'classical', 'dramatic', 'expression', 'futurism', 'gothic', 'heritage', 'impressionism', 'jazz', 'kinetic', 'landscape', 'minimalism', 'naturalism', 'opera', 'portrait', 'realism', 'surrealism', 'tragedy', 'utopia', 'vintage', 'western', 'yogurt', 'zodiac', 'avalanche', 'blizzard', 'cyclone', 'earthquake', 'flood', 'hurricane', 'monsoon', 'tornado', 'tsunami', 'typhoon', 'wildfire', 'nebula', 'galaxy', 'meteor', 'asteroid', 'comet', 'satellite', 'gravity', 'station', 'blackhole', 'spectrogram', 'chromosome', 'photosynthesis', 'metamorphosis', 'archaeology', 'cryptography', 'supernova', 'thermostat', 'vacuum', 'xenon', 'yield', 'zygote', 'whisper', 'vortex', 'utopia', 'treason', 'solstice', 'rhapsody', 'quixotic', 'paradox', 'nostalgia', 'melancholy', 'liminal', 'algorithm', 'biosphere', 'cyclotron', 'diaphragm', 'ecosystem', 'feedback', 'gradient', 'harmonic', 'isotope', 'junction', 'kinetics', 'logarithm', 'momentum', 'neptunium', 'oxidation', 'parallax', 'quotient', 'radiation', 'spectrum', 'topology', 'ultraviolet', 'viscosity', 'waveform']
+    },
+    fa: {
+      easy: ['سیب', 'خانه', 'ماشین', 'خورشید', 'درخت', 'گربه', 'سگ', 'کوه', 'پیتزا', 'دوچرخه', 'ماه', 'ستاره', 'توپ', 'کتاب', 'مداد', 'لیوان', 'کلاه', 'کفش', 'ماهی', 'پرنده', 'اتوبوس', 'تخت', 'در', 'جعبه', 'کلید', 'شیر', 'تخم‌مرغ', 'کیک', 'کیف', 'پنکه', 'قابلمه', 'تابه', 'تور', 'جوهر', 'شیشه', 'هیزم', 'گردو', 'روغن', 'سنجاق', 'موش', 'کراوات', 'کلاه‌گیس', 'بازو', 'پا', 'گوش', 'چشم', 'لب', 'فک', 'انگشت', 'قالی', 'وان', 'شیرآب', 'طی', 'تبر', 'اره', 'سطل', 'قوطی', 'فنجان', 'گل', 'آسمان', 'مگس', 'مورچه', 'زنبور', 'خوک', 'گاو', 'مرغ', 'روباه', 'اردک', 'قورباغه', 'بز', 'آهو', 'خرس', 'شیر', 'گرگ', 'خرچنگ', 'فک', 'سنگ', 'شن', 'خاک', 'باران', 'برف', 'باد', 'آتش', 'برگ', 'دانه', 'ریشه', 'ساقه', 'پوست', 'شاخه', 'تپه', 'غار', 'برکه', 'دریاچه', 'دریا', 'موج', 'قایق', 'پرچم', 'طبل', 'زنگ', 'حلقه', 'مبل', 'میز', 'اجاق', 'سینک', 'چنگال', 'کمربند', 'شانه', 'اردک', 'غاز', 'قو', 'اتو', 'زندان', 'بادبادک', 'لامپ', 'ماسک', 'میخ', 'گلابی', 'جاده', 'صابون', 'چادر', 'واحد', 'گلدان', 'دیوار', 'حیاط', 'صفر', 'اتم', 'پایه', 'آشپز', 'تاس', 'پژواک', 'سوخت', 'هدیه', 'پیاده‌روی', 'جاز', 'نعنا', 'نخل', 'نمک', 'زمان', 'اسید', 'بانک', 'گل', 'عرشه', 'خروج', 'فیلم', 'دروازه', 'غول', 'مورد', 'آشغال', 'گره', 'گدازه', 'هزارتو', 'ظهر', 'اوزون', 'پارک', 'پوند', 'یاقوت', 'امن', 'جزرومد', 'برگشت', 'ویزا', 'غرب', 'یوگا', 'منطقه'],
+      medium: ['فیل', 'گیتار', 'همبرگر', 'جزیره', 'مشتری', 'کانگورو', 'فانوس دریایی', 'قارچ', 'دفترچه', 'هشت‌پا', 'پنگوئن', 'ملکه', 'موشک', 'توت‌فرنگی', 'تلسکوپ', 'چتر', 'آتشفشان', 'نهنگ', 'گورخر', 'هواپیما', 'بادکنک', 'قلعه', 'اژدها', 'عقاب', 'گل', 'یخچال طبیعی', 'هلیکوپتر', 'توده یخ', 'جنگل', 'کوالا', 'لیمو', 'پری دریایی', 'نینجا', 'شترمرغ', 'دزد دریایی', 'لحاف', 'ربات', 'سفینه فضایی', 'ببر', 'تک‌شاخ', 'ویولن', 'جادوگر', 'الماس', 'دوربین', 'لپ‌تاپ', 'پل', 'رنگین‌کمان', 'مجسمه', 'کاخ', 'کویر', 'جنگل', 'مرداب', 'تونل', 'لنگر', 'آهنربا', 'قطب‌نما', 'پازل', 'نردبان', 'آینه', 'شمع', 'چکش', 'آچار', 'بیل', 'سطل', 'سپر', 'کلاهخود', 'شمشیر', 'تیر', 'توپ', 'بطری', 'کتری', 'توستر', 'مخلوط‌کن', 'یخچال', 'بالش', 'پتو', 'پرده', 'کیف‌پول', 'جیب', 'دکمه', 'زیپ', 'عینک', 'ساعت', 'تلفن', 'رادیو', 'استریو', 'پیانو', 'شیپور', 'فلوت', 'تنبک', 'چنگ', 'سنتور', 'آکاردئون', 'نی‌انبان', 'کلارینت', 'سازدهنی', 'ابوا', 'ساکسیفون', 'دایره‌زنگی', 'ترومبون', 'توبا', 'یوکللی', 'سوت', 'آمپلی‌فایر', 'میکروفون', 'بلندگو', 'گرامافون', 'کاست', 'صفحه', 'تندیس', 'سیارک', 'کوله_پشتی', 'تقویم', 'دینامیت', 'پاکت_نامه', 'آتش_بازی', 'ماسک_گاز', 'دستبند', 'دوات', 'صفحه_کلید', 'رژ_لب', 'کوهستان', 'گردنبند', 'پماد', 'گذرنامه', 'شن_روان', 'هفت_تیر', 'چمدان', 'تلسکوپ', 'یک_چرخه', 'تعطیلات', 'کمد_لباس', 'زپلین'],
+      hard: ['معماری', 'مجانب', 'باسیل', 'کاریکاتور', 'قاصدک', 'گریز از مرکز', 'فلورسانس', 'هندسه', 'هیروگلیف', 'ویژگی خاص', 'همجواری', 'زیبانما', 'ماز', 'متالورژی', 'مبهم', 'فراموشی', 'پارلمان', 'قرنظینه', 'رنسانس', 'ضدنور', 'تئاتری', 'فراگیر', 'تهویه', 'طول موج', 'بیگانه‌هراسی', 'دیروز', 'اوج', 'کیمیاگری', 'گیاه‌شناسی', 'شیمی', 'دایناسورها', 'تکامل', 'فسیل‌ها', 'ژنتیک', 'هولوگرام', 'بی‌نهایت', 'روزنامه‌نگاری', 'دانش', 'ادبیات', 'میکروسکوپ', 'ناوبری', 'اپتیک', 'فلسفه', 'کوانتوم', 'بلاغت', 'جامعه‌شناسی', 'آرایه‌شناسی', 'جهان', 'تندی', 'آب و هوا', 'سالنامه', 'جانورشناسی', 'انتزاعی', 'باروک', 'کلاسیک', 'دراماتیک', 'بیان', 'آینده‌گری', 'گوتیک', 'میراث', 'امپرسیونیسم', 'جاز', 'جنبشی', 'چشم‌انداز', 'مینیمالیسم', 'رئالیسم', 'اپرا', 'پرتره', 'واقع‌گرایی', 'سوررئالیسم', 'تراژدی', 'آرمان‌شهر', 'کلاسیک', 'وسترن', 'ماست', 'منطقه البروج', 'بهمن', 'کولاک', 'طوفان', 'زلزله', 'سیل', 'گردباد', 'مونسون', 'سونامی', 'آتش‌سوزی', 'سحابی', 'کهکشان', 'شهاب', 'سیارک', 'دنباله‌دار', 'ماهواره', 'جاذبه', 'ایستگاه', 'سیاه‌چاله', 'اسپکتروگرام', 'کروموزوم', 'فتوسنتز', 'دگردیسی', 'باستان‌شناسی', 'رمزنگاری', 'ابرنواختر', 'ترموستات', 'خلاء', 'سرعت', 'گزنون', 'بازده', 'زیگوت', 'اوج', 'نجوا', 'گرداب', 'آرمان‌شهر', 'خیانت', 'انقلاب‌تابستانی', 'راپسودی', 'خیالی', 'پارادوکس', 'نوستالژی', 'ملانکولی', 'آستانه‌ای', 'الگوریتم', 'زیست‌کره', 'سیکلوترون', 'دیافراگم', 'اکوسیستم', 'بازخورد', 'گرادیان', 'هارمونیک', 'ایزوتوپ', 'پیوند', 'سینتیک', 'لگاریتم', 'تکانه', 'نپتونیوم', 'اکسیداسیون', 'اختلاف_منظر', 'خارج_قسمت', 'تابش', 'طیف', 'توپولوژی', 'فرابنفش', 'گرانروی', 'شکل_موج']
+    }
+  };
 
   function startNewRound(roomId: string) {
     const room = rooms.get(roomId);
@@ -236,20 +306,19 @@ async function startServer() {
     const nextIndex = (currentIndex + 1) % room.players.length;
     room.currentDrawerId = room.players[nextIndex].id;
 
-    // Pick word
-    const enWords = [
-      'apple', 'house', 'car', 'sun', 'tree', 'cat', 'dog', 'mountain', 'ocean', 'computer', 'pizza', 'bicycle',
-      'elephant', 'guitar', 'hamburger', 'island', 'jupiter', 'kangaroo', 'lighthouse', 'mushroom', 'notebook', 'octopus',
-      'penguin', 'queen', 'rocket', 'strawberry', 'telescope', 'umbrella', 'volcano', 'whale', 'xylophone', 'yacht', 'zebra',
-      'airplane', 'balloon', 'castle', 'dragon', 'eagle', 'flower', 'glacier', 'helicopter', 'iceberg', 'jungle', 'koala',
-      'lemon', 'mermaid', 'ninja', 'ostrich', 'pirate', 'quilt', 'robot', 'spaceship', 'tiger', 'unicorn', 'violin', 'wizard',
-      'bed', 'chair', 'table', 'cabinet', 'window', 'door', 'wall', 'ceiling', 'carpet', 'lamp', 'book', 'pencil', 'notebook', 'eraser', 'paper',
-      'shoe', 'sock', 'pants', 'shirt', 'hat', 'glasses', 'watch', 'bracelet', 'necklace', 'ring', 'earring', 'bag', 'money',
-      'bread', 'cheese', 'butter', 'jam', 'honey', 'milk', 'tea', 'coffee', 'water', 'juice', 'vinegar', 'oil', 'rice', 'meat', 'chicken', 'fish',
-      'smile', 'cry', 'friend', 'enemy', 'young', 'old', 'big', 'small', 'hot', 'cold', 'bright', 'dark', 'good', 'bad', 'ugly', 'beautiful'
-    ];
+    // Get combined word list based on difficulty
+    const lang = room.settings.language || 'en';
+    const difficulty = room.settings.difficulty || 'medium';
+    let words: string[] = [];
     
-    const words = room.settings.language === 'fa' ? faWords : enWords;
+    if (difficulty === 'easy') {
+      words = wordsList[lang].easy;
+    } else if (difficulty === 'medium') {
+      words = [...wordsList[lang].easy, ...wordsList[lang].medium];
+    } else {
+      words = [...wordsList[lang].easy, ...wordsList[lang].medium, ...wordsList[lang].hard];
+    }
+
     room.currentWord = words[Math.floor(Math.random() * words.length)];
     
     room.status = 'playing';
@@ -264,17 +333,28 @@ async function startServer() {
     // Start countdown
     const timer = setInterval(() => {
       const currentRoom = rooms.get(roomId);
-      if (currentRoom && currentRoom.status === 'playing') {
-        currentRoom.roundTimeLeft--;
-        if (currentRoom.roundTimeLeft <= 0) {
-          if (currentRoom.phase === 'drawing') {
-            currentRoom.phase = 'guessing';
-            currentRoom.roundTimeLeft = currentRoom.settings.guessingTimeAfterFinish;
-            io.to(roomId).emit('room_update', currentRoom);
+      if (!currentRoom) {
+        clearInterval(timer);
+        timers.delete(roomId);
+        return;
+      }
+
+      if (currentRoom.status === 'playing') {
+        if (!currentRoom.isPaused) {
+          currentRoom.roundTimeLeft--;
+          if (currentRoom.roundTimeLeft <= 0) {
+            if (currentRoom.phase === 'drawing') {
+              currentRoom.phase = 'guessing';
+              currentRoom.roundTimeLeft = currentRoom.settings.guessingTimeAfterFinish;
+              io.to(roomId).emit('room_update', currentRoom);
+            } else {
+              endRound(roomId);
+            }
           } else {
-            endRound(roomId);
+            io.to(roomId).emit('timer_update', currentRoom.roundTimeLeft);
           }
         } else {
+          // Keep emitting timer update even if paused to ensure UI is in sync
           io.to(roomId).emit('timer_update', currentRoom.roundTimeLeft);
         }
       } else {
@@ -316,7 +396,7 @@ async function startServer() {
     }, 5000);
   }
 
-  // Vite middlewar setup
+  // Vite middleware setup
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },

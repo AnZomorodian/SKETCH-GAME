@@ -267,18 +267,18 @@ export default function DrawingCanvas({ isDrawer, drawingData, onDraw, onFinish 
           {/* Tools Selection */}
           <div className="bg-white border-2 border-black p-2 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex flex-col gap-2">
             <div className="grid grid-cols-3 gap-1">
-              <ToolBtn active={tool === 'pen'} onClick={() => setTool('pen')} icon={<Pencil size={18} />} title="Pencil (Draw freehand lines)" />
-              <ToolBtn active={tool === 'eraser'} onClick={() => setTool('eraser')} icon={<Eraser size={18} />} title="Eraser (Remove parts of your drawing)" />
-              <ToolBtn active={tool === 'rect'} onClick={() => setTool('rect')} icon={<Square size={18} />} title="Square (Draw rectangles and squares)" />
-              <ToolBtn active={tool === 'circle'} onClick={() => setTool('circle')} icon={<CircleIcon size={18} />} title="Circle (Draw perfect circles)" />
-              <ToolBtn active={tool === 'ellipse'} onClick={() => setTool('ellipse')} icon={<CircleIcon size={18} className="scale-x-125" />} title="Ellipse (Draw oval shapes)" />
-              <ToolBtn active={tool === 'polygon'} onClick={() => setTool('polygon')} icon={<Triangle size={18} />} title="Triangle (Draw 3-sided polygons)" />
-              <ToolBtn active={tool === 'text'} onClick={() => setTool('text')} icon={<Type size={18} />} title="Text (Click to add text to the canvas)" />
-              <ToolBtn active={tool === 'pan'} onClick={() => setTool('pan')} icon={<Move size={18} />} title="Pan & Zoom (Drag to move, scroll to zoom)" />
+              <ToolBtn active={tool === 'pen'} onClick={() => setTool('pen')} icon={<Pencil size={18} />} title="Pencil Tool: Draw freehand lines with your current color and stroke settings" />
+              <ToolBtn active={tool === 'eraser'} onClick={() => setTool('eraser')} icon={<Eraser size={18} />} title="Eraser Tool: Remove parts of your drawing by drawing over them" />
+              <ToolBtn active={tool === 'rect'} onClick={() => setTool('rect')} icon={<Square size={18} />} title="Rectangle Tool: Click and drag to create perfect rectangles or squares" />
+              <ToolBtn active={tool === 'circle'} onClick={() => setTool('circle')} icon={<CircleIcon size={18} />} title="Circle Tool: Click and drag to create uniform circles" />
+              <ToolBtn active={tool === 'ellipse'} onClick={() => setTool('ellipse')} icon={<CircleIcon size={18} className="scale-x-125" />} title="Ellipse Tool: Create oval shapes by dragging" />
+              <ToolBtn active={tool === 'polygon'} onClick={() => setTool('polygon')} icon={<Triangle size={18} />} title="Triangle Tool: Create geometric triangles" />
+              <ToolBtn active={tool === 'text'} onClick={() => setTool('text')} icon={<Type size={18} />} title="Text Tool: Click anywhere on the canvas to type a label or message" />
+              <ToolBtn active={tool === 'pan'} onClick={() => setTool('pan')} icon={<Move size={18} />} title="Pan & Zoom Tool: Click and drag to navigate the canvas. Use mouse wheel to zoom." />
               <button 
                 className="w-8 h-8 flex items-center justify-center border-2 border-transparent hover:border-black/20 text-[10px] font-black"
                 onClick={() => { setScale(1); setPosition({ x: 0, y: 0 }); }}
-                title="Reset View (Return to default zoom and position)"
+                title="Reset View: Snap back to 100% zoom and center position"
               >
                 1:1
               </button>
@@ -361,9 +361,9 @@ export default function DrawingCanvas({ isDrawer, drawingData, onDraw, onFinish 
                 <button
                   key={c}
                   onClick={() => setColor(c)}
-                  className={`w-6 h-6 border-2 ${color === c ? 'border-black scale-110 z-10' : 'border-transparent'}`}
+                  className={`w-6 h-6 border-2 transition-transform hover:scale-110 ${color === c ? 'border-black scale-110 z-10' : 'border-transparent'}`}
                   style={{ backgroundColor: c }}
-                  title={`Select Color: ${c === '#FFFFFF' ? 'White/Eraser' : c}`}
+                  title={`Color: ${c === '#FFFFFF' ? 'White / Eraser' : c === '#000000' ? 'Black' : c}`}
                 />
               ))}
             </div>

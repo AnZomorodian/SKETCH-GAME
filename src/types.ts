@@ -17,6 +17,7 @@ export interface GameSettings {
   language: 'en' | 'fa';
   guessingTimeAfterFinish: number;
   winningPoints: number;
+  difficulty: 'easy' | 'medium' | 'hard';
 }
 
 export interface GameState {

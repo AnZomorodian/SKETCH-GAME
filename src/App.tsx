@@ -19,6 +19,13 @@ export default function App() {
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // Auto-join if room code in URL
+    const params = new URLSearchParams(window.location.search);
+    const roomFromUrl = params.get('room');
+    if (roomFromUrl && !joined) {
+      setRoomId(roomFromUrl);
+    }
+
     socket.on('room_update', (state: GameState) => {
       setGameState(state);
     });
@@ -97,6 +104,24 @@ export default function App() {
   const kickPlayer = (playerId: string) => {
     if (gameState) {
       socket.emit('kick_player', { roomId: gameState.id, playerId });
+    }
+  };
+
+  const resetPoints = () => {
+    if (gameState && isHost) {
+      socket.emit('reset_points', { roomId: gameState.id });
+    }
+  };
+
+  const skipRound = () => {
+    if (gameState && isHost) {
+      socket.emit('skip_round', { roomId: gameState.id });
+    }
+  };
+
+  const changeDrawer = () => {
+    if (gameState && isHost) {
+      socket.emit('change_drawer', { roomId: gameState.id });
     }
   };
 
@@ -206,12 +231,13 @@ export default function App() {
           <h1 className="text-4xl font-black italic tracking-tighter uppercase leading-none">DEEP SKETCH</h1>
           <div 
             onClick={() => {
-              navigator.clipboard.writeText(gameState.id);
+              const url = window.location.origin + window.location.pathname + '?room=' + gameState.id;
+              navigator.clipboard.writeText(url);
               setCopied(true);
             }}
             className="bg-black text-white px-4 py-1 text-[10px] font-bold tracking-[0.2em] cursor-pointer hover:bg-sketch-red transition-colors"
           >
-            {copied ? 'COPIED!' : `ROOM: #${gameState.id}`}
+            {copied ? 'LINK COPIED!' : `ROOM: #${gameState.id}`}
           </div>
           <button 
             onClick={() => setShowRules(true)}
@@ -539,8 +565,8 @@ export default function App() {
                 <div className="flex gap-4">
                   <div className="w-10 h-10 bg-sketch-blue border-2 border-black flex items-center justify-center shrink-0 font-black italic text-white text-xs">FIN</div>
                   <div>
-                    <p className="font-black text-black uppercase tracking-tight">Guessing Phase (+100 PTS)</p>
-                    <p className="text-[11px] leading-tight">Guessers earn <span className="bg-sketch-green text-white px-1">100 points</span> for a correct word. Artist earns <span className="bg-sketch-yellow px-1">50 points</span> per correct guess!</p>
+                    <p className="font-black text-black uppercase tracking-tight">Guessing Phase (+100 PTS MAX)</p>
+                    <p className="text-[11px] leading-tight">Guessers earn up to <span className="bg-sketch-green text-white px-1">100 points</span>. Fast guessing = more points! Every 10 seconds reduces the score by 5. Artist earns half of guesser's points!</p>
                   </div>
                 </div>
                 
@@ -594,7 +620,37 @@ export default function App() {
               <h2 className="text-4xl font-black italic tracking-tighter mb-8 border-b-4 border-black pb-2">Control Room</h2>
               
               <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2">
-                <p className="text-[10px] font-black text-black/40 tracking-[0.2em] mb-4">Manage Players</p>
+                <div className="bg-black/5 p-4 border-2 border-black mb-6">
+                  <p className="text-[10px] font-black uppercase tracking-widest mb-3 opacity-50">Global Match Controls</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button 
+                      onClick={togglePause}
+                      className={`py-3 font-black text-[10px] border-2 border-black transition-all ${gameState.isPaused ? 'bg-sketch-green text-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]' : 'bg-white hover:bg-sketch-yellow'}`}
+                    >
+                      {gameState.isPaused ? 'RESUME MATCH' : 'PAUSE MATCH'}
+                    </button>
+                    <button 
+                      onClick={skipRound}
+                      className="py-3 bg-black text-white text-[10px] font-black hover:bg-sketch-red transition-colors"
+                    >
+                      SKIP ROUND
+                    </button>
+                    <button 
+                      onClick={changeDrawer}
+                      className="py-3 bg-black text-white text-[10px] font-black hover:bg-sketch-blue transition-colors"
+                    >
+                      CHANGE DRAWER
+                    </button>
+                    <button 
+                      onClick={resetPoints}
+                      className="py-3 bg-black text-white text-[10px] font-black hover:bg-sketch-yellow hover:text-black transition-colors"
+                    >
+                      RESET POINTS
+                    </button>
+                  </div>
+                </div>
+
+                <p className="text-[10px] font-black text-black/40 tracking-[0.2em] mb-4">Lobby Management ({gameState.players.length} Players)</p>
                 
                 {gameState.players.map((p) => (
                   <div key={p.id} className="flex items-center justify-between p-4 border-2 border-black bg-gray-50">
@@ -742,6 +798,23 @@ export default function App() {
                             }`}
                           >
                             {points}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black mb-3 text-black/40 tracking-widest">Difficulty</label>
+                      <div className="flex gap-4">
+                        {['easy', 'medium', 'hard'].map(diff => (
+                          <button
+                            key={diff}
+                            onClick={() => setPendingSettings({ ...pendingSettings, difficulty: diff })}
+                            className={`flex-1 py-3 border-2 border-black font-black transition-all uppercase ${
+                              pendingSettings.difficulty === diff ? 'bg-sketch-yellow shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]' : 'bg-white hover:bg-gray-50'
+                            }`}
+                          >
+                            {diff}
                           </button>
                         ))}
                       </div>
