@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { motion, AnimatePresence } from 'motion/react';
-import { Palette, Users, Trophy, Send, Terminal, Play, LogIn, Plus, Info, X, LogOut, Settings, ShieldCheck, UserMinus, Pause, Check } from 'lucide-react';
+import { Palette, Users, Trophy, Send, Terminal, Play, LogIn, Plus, Info, X, LogOut, Settings, ShieldCheck, UserMinus, Pause, Check, Compass, Map } from 'lucide-react';
 import DrawingCanvas from './components/DrawingCanvas';
 import { GameState, Player } from './types';
 import confetti from 'canvas-confetti';
@@ -230,9 +230,25 @@ export default function App() {
         <div className="flex items-center gap-6">
           <h1 className="text-4xl font-black italic tracking-tighter uppercase leading-none">DEEP SKETCH</h1>
           <div 
-            onClick={() => {
+            onClick={async () => {
               const url = window.location.origin + window.location.pathname + '?room=' + gameState.id;
-              navigator.clipboard.writeText(url);
+              try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                  await navigator.clipboard.writeText(url);
+                } else {
+                  throw new Error('Clipboard API not available');
+                }
+              } catch (err) {
+                const el = document.createElement('textarea');
+                el.value = url;
+                el.setAttribute('readonly', '');
+                el.style.position = 'absolute';
+                el.style.left = '-9999px';
+                document.body.appendChild(el);
+                el.select();
+                document.execCommand('copy');
+                document.body.removeChild(el);
+              }
               setCopied(true);
             }}
             className="bg-black text-white px-4 py-1 text-[10px] font-bold tracking-[0.2em] cursor-pointer hover:bg-sketch-red transition-colors"
@@ -270,6 +286,18 @@ export default function App() {
             title="Exit Game"
           >
             <LogOut className="w-5 h-5 group-hover:scale-110 transition-transform" />
+          </button>
+
+          <button 
+            onClick={() => {
+              document.getElementById('drawing-board-wrapper')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              window.dispatchEvent(new CustomEvent('reset-canvas-focus'));
+            }}
+            className="h-10 border-2 border-black bg-white hover:bg-sketch-yellow transition-all flex items-center gap-2 px-3 text-[10px] font-black tracking-widest shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none"
+            title="Map View: Auto-Align Focus with Canvas Draw Section"
+          >
+            <Map className="w-4 h-4 text-sketch-blue" />
+            <span>Map Design / Focus Draw</span>
           </button>
           
           {isHost && gameState.status === 'playing' && (
@@ -321,7 +349,9 @@ export default function App() {
         <aside className="w-72 border-r-2 border-black bg-white flex flex-col">
           <div className="p-4 border-b border-black/10 flex justify-between items-center bg-gray-50">
             <span className="text-[10px] font-black uppercase tracking-widest text-black/50">Players</span>
-            <span className="text-xs font-mono font-bold">{gameState.players.length}/08</span>
+            <span className="text-xs font-mono font-bold">
+              {gameState.players.length}/{gameState.settings.maxPlayers.toString().padStart(2, '0')}
+            </span>
           </div>
           
           <div className="flex-1 overflow-y-auto">
@@ -343,7 +373,7 @@ export default function App() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="font-black text-sm truncate uppercase tracking-tight">
+                       <span className="font-black text-sm truncate uppercase tracking-tight">
                         {player.name} {player.id === socket.id && '(YOU)'}
                       </span>
                       {player.id === gameState.currentDrawerId && (
@@ -357,6 +387,22 @@ export default function App() {
                 </motion.div>
               ))}
             </AnimatePresence>
+          </div>
+
+          {/* Map Alignment / Drawing section focus shortcut */}
+          <div className="p-4 border-t border-black/10 bg-gray-50 flex flex-col gap-2">
+            <span className="text-[8px] font-black uppercase tracking-wider text-black/40">Map Design Alignment</span>
+            <button
+              onClick={() => {
+                document.getElementById('drawing-board-wrapper')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                window.dispatchEvent(new CustomEvent('reset-canvas-focus'));
+              }}
+              className="w-full py-2 bg-white hover:bg-sketch-yellow border-2 border-black font-black text-[10px] uppercase transition-all flex items-center justify-center gap-2 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none"
+              title="Click to automatically center view on the drawing board canvas"
+            >
+              <Compass className="w-3.5 h-3.5 text-sketch-blue" />
+              Focus Drawing Section
+            </button>
           </div>
 
           <div className="p-4 border-t-2 border-black bg-white">
@@ -383,14 +429,28 @@ export default function App() {
         </aside>
 
         {/* Center: Canvas Area */}
-        <section className="flex-1 flex flex-col bg-[#EEE] relative overflow-hidden">
+        <section id="drawing-board-wrapper" className="flex-1 flex flex-col bg-[#EEE] relative overflow-hidden">
           <div className="m-12 flex-1 bg-white border-2 border-black shadow-[16px_16px_0px_0px_rgba(0,0,0,0.05)] relative overflow-hidden group">
             <DrawingCanvas
-              isDrawer={isDrawer && gameState.status === 'playing'}
+              isDrawer={isDrawer && gameState.status === 'playing' && !gameState.isPaused}
               drawingData={gameState.drawingData}
               onDraw={handleDraw}
               onFinish={handleFinish}
             />
+
+            {gameState.isPaused && (
+              <div className="absolute inset-0 z-40 bg-black/60 flex flex-col items-center justify-center backdrop-blur-sm">
+                <motion.div
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  className="text-center text-white p-6 bg-black border-4 border-sketch-red"
+                >
+                  <Pause className="w-16 h-16 mx-auto mb-4 text-sketch-red animate-pulse" />
+                  <h2 className="text-3xl font-black italic tracking-tighter uppercase mb-2">Game Paused!</h2>
+                  <p className="text-[10px] font-bold uppercase tracking-widest opacity-80">Waiting for host to resume...</p>
+                </motion.div>
+              </div>
+            )}
 
             {gameState.status === 'round_end' && (
               <div className="absolute inset-0 z-40 bg-black/90 flex items-center justify-center backdrop-blur-sm">

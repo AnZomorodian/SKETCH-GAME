@@ -22,6 +22,8 @@ export default function DrawingCanvas({ isDrawer, drawingData, onDraw, onFinish 
   const [dash, setDash] = useState<number[] | undefined>(undefined);
   const [fontSize, setFontSize] = useState(20);
   const [fontFamily, setFontFamily] = useState('Space Grotesk');
+  const [polygonSides, setPolygonSides] = useState(6); // Default to Hexagon
+  const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -32,6 +34,46 @@ export default function DrawingCanvas({ isDrawer, drawingData, onDraw, onFinish 
   useEffect(() => {
     setLines(drawingData);
   }, [drawingData]);
+
+  // Handle stage resize dynamically using ResizeObserver
+  useEffect(() => {
+    if (!containerRef.current) return;
+    
+    const observer = new ResizeObserver((entries) => {
+      for (let entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          setDimensions({ width, height });
+        }
+      }
+    });
+    
+    observer.observe(containerRef.current);
+    
+    // Set initial size
+    const initialWidth = containerRef.current.offsetWidth;
+    const initialHeight = containerRef.current.offsetHeight;
+    if (initialWidth > 0 && initialHeight > 0) {
+      setDimensions({ width: initialWidth, height: initialHeight });
+    }
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  // Listen for reset canvas focus event
+  useEffect(() => {
+    const handleResetFocus = () => {
+      setScale(1);
+      setPosition({ x: 0, y: 0 });
+    };
+
+    window.addEventListener('reset-canvas-focus', handleResetFocus);
+    return () => {
+      window.removeEventListener('reset-canvas-focus', handleResetFocus);
+    };
+  }, []);
 
   const handleMouseDown = (e: any) => {
     if (!isDrawer || tool === 'pan') return;
@@ -86,7 +128,7 @@ export default function DrawingCanvas({ isDrawer, drawingData, onDraw, onFinish 
       newLine = {
         x: pos.x,
         y: pos.y,
-        sides: 3,
+        sides: polygonSides,
         radius: 0,
         stroke: color,
         strokeWidth: strokeWidth,
@@ -198,8 +240,8 @@ export default function DrawingCanvas({ isDrawer, drawingData, onDraw, onFinish 
   return (
     <div ref={containerRef} className="bg-white overflow-hidden aspect-[4/3] relative group w-full h-full border-2 border-black">
       <Stage
-        width={containerRef.current?.offsetWidth || 800}
-        height={containerRef.current?.offsetHeight || 600}
+        width={dimensions.width}
+        height={dimensions.height}
         onMouseDown={handleMouseDown}
         onMousemove={handleMouseMove}
         onMouseup={handleMouseUp}
@@ -272,7 +314,7 @@ export default function DrawingCanvas({ isDrawer, drawingData, onDraw, onFinish 
               <ToolBtn active={tool === 'rect'} onClick={() => setTool('rect')} icon={<Square size={18} />} title="Rectangle Tool: Click and drag to create perfect rectangles or squares" />
               <ToolBtn active={tool === 'circle'} onClick={() => setTool('circle')} icon={<CircleIcon size={18} />} title="Circle Tool: Click and drag to create uniform circles" />
               <ToolBtn active={tool === 'ellipse'} onClick={() => setTool('ellipse')} icon={<CircleIcon size={18} className="scale-x-125" />} title="Ellipse Tool: Create oval shapes by dragging" />
-              <ToolBtn active={tool === 'polygon'} onClick={() => setTool('polygon')} icon={<Triangle size={18} />} title="Triangle Tool: Create geometric triangles" />
+              <ToolBtn active={tool === 'polygon'} onClick={() => setTool('polygon')} icon={<Hexagon size={18} />} title="Polygon Tool: Click and drag to create custom polygons with adjustable sides (e.g. Hexagon, Octagon)" />
               <ToolBtn active={tool === 'text'} onClick={() => setTool('text')} icon={<Type size={18} />} title="Text Tool: Click anywhere on the canvas to type a label or message" />
               <ToolBtn active={tool === 'pan'} onClick={() => setTool('pan')} icon={<Move size={18} />} title="Pan & Zoom Tool: Click and drag to navigate the canvas. Use mouse wheel to zoom." />
               <button 
@@ -328,6 +370,37 @@ export default function DrawingCanvas({ isDrawer, drawingData, onDraw, onFinish 
                 title="Adjust how fast you zoom in and out"
               />
             </div>
+
+            {tool === 'polygon' && (
+              <div className="border-t border-black/10 pt-2 flex flex-col gap-1.5">
+                <div className="flex justify-between items-center text-[8px] font-black uppercase text-black/40 tracking-widest">
+                  <span>Sides</span>
+                  <span className="text-[10px] font-bold font-mono bg-black text-white px-1.5 py-0.5 rounded-sm">{polygonSides} SIDES</span>
+                </div>
+                <input 
+                  type="range"
+                  min="3"
+                  max="12"
+                  step="1"
+                  value={polygonSides}
+                  onChange={(e) => setPolygonSides(parseInt(e.target.value))}
+                  className="w-full h-1 bg-black/10 appearance-none rounded-full accent-black cursor-pointer"
+                  title="Adjust the number of sides for the polygon"
+                />
+                <div className="grid grid-cols-4 gap-1 mt-1">
+                  {[3, 5, 6, 8].map(sides => (
+                    <button
+                      key={sides}
+                      onClick={() => setPolygonSides(sides)}
+                      className={`py-1 text-[8px] font-black border uppercase transition-all ${polygonSides === sides ? 'border-black bg-sketch-yellow' : 'border-black/10 text-black/50 hover:border-black'}`}
+                      title={`${sides === 3 ? 'Triangle' : sides === 5 ? 'Pentagon' : sides === 6 ? 'Hexagon' : 'Octagon'}`}
+                    >
+                      {sides === 3 ? 'Tri' : sides === 5 ? 'Pent' : sides === 6 ? 'Hex' : 'Oct'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {tool === 'text' && (
               <div className="border-t border-black/10 pt-2 flex flex-col gap-2">
