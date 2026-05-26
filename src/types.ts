@@ -2,6 +2,7 @@ export interface Player {
   id: string;
   name: string;
   points: number;
+  cantGuessThisRound?: boolean;
 }
 
 export interface Guess {

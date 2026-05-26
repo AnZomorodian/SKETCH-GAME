@@ -51,12 +51,17 @@ export default function App() {
       setJoined(false);
     });
 
+    socket.on('game_refreshed', () => {
+      setGuess('');
+    });
+
     return () => {
       socket.off('room_update');
       socket.off('drawing_sync');
       socket.off('correct_guess');
       socket.off('timer_update');
       socket.off('error');
+      socket.off('game_refreshed');
     };
   }, []);
 
@@ -67,6 +72,7 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [pendingSettings, setPendingSettings] = useState<any>(null);
+  const [mobileTab, setMobileTab] = useState<'canvas' | 'players' | 'chat'>('canvas');
 
   useEffect(() => {
     if (gameState && !pendingSettings && showSettings) {
@@ -122,6 +128,18 @@ export default function App() {
   const changeDrawer = () => {
     if (gameState && isHost) {
       socket.emit('change_drawer', { roomId: gameState.id });
+    }
+  };
+
+  const refreshGame = () => {
+    if (gameState && isHost) {
+      socket.emit('refresh_game', { roomId: gameState.id });
+    }
+  };
+
+  const changeHost = (newHostId: string) => {
+    if (gameState && isHost) {
+      socket.emit('change_host', { roomId: gameState.id, newHostId });
     }
   };
 
@@ -222,13 +240,15 @@ export default function App() {
 
   const isHost = socket.id === gameState.hostId;
   const isDrawer = socket.id === gameState.currentDrawerId;
+  const currentPlayer = gameState.players.find(p => p.id === socket.id);
+  const cantGuess = currentPlayer?.cantGuessThisRound || false;
 
   return (
-    <div className="h-screen bg-cream flex flex-col font-sans overflow-hidden">
+    <div className="h-screen h-[100dvh] bg-cream flex flex-col font-sans overflow-hidden">
       {/* Header Bar */}
-      <header className="h-20 bg-white border-b-2 border-black flex items-center justify-between px-8 z-30">
-        <div className="flex items-center gap-6">
-          <h1 className="text-4xl font-black italic tracking-tighter uppercase leading-none">DEEP SKETCH</h1>
+      <header className="min-h-20 lg:h-20 bg-white border-b-2 border-black flex flex-col lg:flex-row items-center justify-between px-4 lg:px-8 py-3 lg:py-0 z-30 shrink-0 gap-4">
+        <div className="flex flex-wrap items-center justify-center lg:justify-start gap-3 lg:gap-6 w-full lg:w-auto">
+          <h1 className="text-2xl md:text-3xl lg:text-4xl font-black italic tracking-tighter uppercase leading-none shrink-0">DEEP SKETCH</h1>
           <div 
             onClick={async () => {
               const url = window.location.origin + window.location.pathname + '?room=' + gameState.id;
@@ -251,7 +271,7 @@ export default function App() {
               }
               setCopied(true);
             }}
-            className="bg-black text-white px-4 py-1 text-[10px] font-bold tracking-[0.2em] cursor-pointer hover:bg-sketch-red transition-colors"
+            className="bg-black text-white px-3 py-1.5 md:px-4 md:py-1 text-[9px] md:text-[10px] font-bold tracking-[0.2em] cursor-pointer hover:bg-sketch-red transition-colors"
           >
             {copied ? 'LINK COPIED!' : `ROOM: #${gameState.id}`}
           </div>
@@ -311,10 +331,10 @@ export default function App() {
           )}
         </div>
 
-        <div className="flex items-center gap-10">
+        <div className="flex items-center justify-center lg:justify-end gap-6 lg:gap-10 w-full lg:w-auto">
           <div className="flex flex-col items-center">
-            <span className="text-[10px] uppercase font-black text-black/30 leading-none mb-1">Time Left</span>
-            <span className="text-3xl font-mono font-bold leading-none">
+            <span className="text-[9px] md:text-[10px] uppercase font-black text-black/30 leading-none mb-1">Time Left</span>
+            <span className="text-2xl md:text-3xl font-mono font-bold leading-none">
               {gameState.isPaused ? (
                 <span className="text-sketch-red animate-pulse">PAUSED</span>
               ) : (
@@ -326,17 +346,17 @@ export default function App() {
           <div className="h-12 w-[2px] bg-black/10" />
 
           <div className="flex flex-col items-end">
-            <span className="text-[10px] uppercase font-black text-black/30 leading-none mb-1">
+            <span className="text-[9px] md:text-[10px] uppercase font-black text-black/30 leading-none mb-1">
               {gameState.phase === 'guessing' ? 'GUESS NOW!' : 'The Word'}
             </span>
             <div className="flex gap-1">
               {isDrawer || gameState.phase === 'guessing' ? (
-                <span className={`text-xl font-black tracking-widest border-b-2 border-black italic px-2 ${gameState.phase === 'guessing' ? 'bg-sketch-green text-white animate-bounce' : 'bg-sketch-yellow'}`}>
+                <span className={`text-lg md:text-xl font-black tracking-widest border-b-2 border-black italic px-2 ${gameState.phase === 'guessing' ? 'bg-sketch-green text-white animate-bounce' : 'bg-sketch-yellow'}`}>
                   {gameState.phase === 'guessing' && !isDrawer ? '???' : gameState.currentWord}
                 </span>
               ) : (
                 gameState.currentWord?.split('').map((_, i) => (
-                  <span key={i} className="w-6 h-8 border-b-2 border-black/20 flex items-center justify-center text-xl font-black opacity-30">_</span>
+                  <span key={i} className="w-5 md:w-6 h-8 border-b-2 border-black/20 flex items-center justify-center text-lg md:text-xl font-black opacity-30">_</span>
                 ))
               )}
             </div>
@@ -344,9 +364,34 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 flex overflow-hidden">
+      <main className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
+        {/* Mobile Tab Switcher */}
+        <div className="flex lg:hidden bg-white border-b-2 border-black text-[10px] font-black tracking-widest uppercase shrink-0">
+          <button 
+            type="button"
+            onClick={() => setMobileTab('canvas')}
+            className={`flex-1 py-3 text-center transition-colors border-r border-black font-black ${mobileTab === 'canvas' ? 'bg-sketch-yellow text-black' : 'bg-white hover:bg-gray-50'}`}
+          >
+            🎨 Canvas
+          </button>
+          <button 
+            type="button"
+            onClick={() => setMobileTab('players')}
+            className={`flex-1 py-3 text-center transition-colors border-r border-black font-black ${mobileTab === 'players' ? 'bg-sketch-blue text-white' : 'bg-white hover:bg-gray-50'}`}
+          >
+            👥 Players ({gameState.players.length})
+          </button>
+          <button 
+            type="button"
+            onClick={() => setMobileTab('chat')}
+            className={`flex-1 py-3 text-center transition-colors font-black ${mobileTab === 'chat' ? 'bg-sketch-green text-white' : 'bg-white hover:bg-gray-50'}`}
+          >
+            💬 Chat ({gameState.guesses.length})
+          </button>
+        </div>
+
         {/* Left Sidebar: Players */}
-        <aside className="w-72 border-r-2 border-black bg-white flex flex-col">
+        <aside className={`w-full lg:w-72 border-b-2 lg:border-b-0 lg:border-r-2 border-black bg-white flex flex-col shrink-0 ${mobileTab === 'players' ? 'flex flex-1 overflow-y-auto' : 'hidden lg:flex'}`}>
           <div className="p-4 border-b border-black/10 flex justify-between items-center bg-gray-50">
             <span className="text-[10px] font-black uppercase tracking-widest text-black/50">Players</span>
             <span className="text-xs font-mono font-bold">
@@ -378,6 +423,9 @@ export default function App() {
                       </span>
                       {player.id === gameState.currentDrawerId && (
                         <div className="bg-black text-white px-2 py-0.5 text-[8px] font-bold tracking-widest uppercase italic animate-pulse">DRAWING</div>
+                      )}
+                      {player.cantGuessThisRound && (
+                        <div className="bg-sketch-red/15 border border-black/10 text-black/60 px-2 py-0.5 text-[8px] font-bold tracking-widest uppercase italic">LATE JOINER</div>
                       )}
                     </div>
                     <div className="text-[10px] font-mono font-bold text-black/40 uppercase tracking-tighter">
@@ -429,8 +477,8 @@ export default function App() {
         </aside>
 
         {/* Center: Canvas Area */}
-        <section id="drawing-board-wrapper" className="flex-1 flex flex-col bg-[#EEE] relative overflow-hidden">
-          <div className="m-12 flex-1 bg-white border-2 border-black shadow-[16px_16px_0px_0px_rgba(0,0,0,0.05)] relative overflow-hidden group">
+        <section id="drawing-board-wrapper" className={`flex-1 flex flex-col bg-[#EEE] relative overflow-hidden ${mobileTab === 'canvas' ? 'flex bg-[#EEE]' : 'hidden lg:flex'}`}>
+          <div className="m-2 md:m-4 lg:m-12 flex-1 bg-white border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,0.1)] lg:shadow-[16px_16px_0px_0px_rgba(0,0,0,0.05)] relative overflow-hidden group min-h-[300px]">
             <DrawingCanvas
               isDrawer={isDrawer && gameState.status === 'playing' && !gameState.isPaused}
               drawingData={gameState.drawingData}
@@ -495,7 +543,7 @@ export default function App() {
             )}
           </div>
 
-          <div className="h-20 px-12 flex items-center gap-6 bg-white border-t-2 border-black">
+          <div className="h-16 lg:h-20 px-4 lg:px-12 flex items-center gap-3 lg:gap-6 bg-white border-t-2 border-black shrink-0">
             <div className="h-3 flex-1 bg-black/5 border border-black/10 overflow-hidden relative">
               <motion.div 
                 className="h-full bg-black"
@@ -512,7 +560,7 @@ export default function App() {
         </section>
 
         {/* Right Sidebar: Chat/Guesses */}
-        <aside className="w-80 border-l-2 border-black bg-white flex flex-col">
+        <aside className={`w-full lg:w-80 border-t-2 lg:border-t-0 lg:border-l-2 border-black bg-white flex flex-col shrink-0 ${mobileTab === 'chat' ? 'flex flex-1 overflow-y-auto' : 'hidden lg:flex'}`}>
           <div className="p-4 border-b border-black/10 bg-gray-50 flex items-center gap-2">
             <span className="text-[10px] font-black uppercase tracking-widest text-black/50">Live Activity</span>
             <div className="h-2 w-2 bg-sketch-green rounded-full animate-pulse" />
@@ -563,8 +611,8 @@ export default function App() {
                 type="text"
                 value={guess}
                 onChange={(e) => setGuess(e.target.value)}
-                disabled={isDrawer || gameState.status !== 'playing' || gameState.phase !== 'guessing'}
-                placeholder={isDrawer ? "CAN'T GUESS WHILE DRAWING" : gameState.phase !== 'guessing' ? "WAIT FOR DRAWING TO FINISH" : "TYPE YOUR GUESS..."}
+                disabled={isDrawer || cantGuess || gameState.status !== 'playing' || gameState.phase !== 'guessing'}
+                placeholder={isDrawer ? "CAN'T GUESS WHILE DRAWING" : cantGuess ? "CAN'T GUESS (MID-ROUND LATE JOINER)" : gameState.phase !== 'guessing' ? "WAIT FOR DRAWING TO FINISH" : "TYPE YOUR GUESS..."}
                 className="w-full border-2 border-black p-4 text-[11px] font-black uppercase tracking-widest focus:outline-none focus:bg-sketch-yellow/10 transition-all placeholder:text-black/20 disabled:bg-gray-100 disabled:opacity-50"
               />
               <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-20 font-black text-xs pointer-events-none group-focus-within:opacity-100 transition-opacity">
@@ -575,7 +623,7 @@ export default function App() {
         </aside>
       </main>
 
-      <footer className="h-10 bg-black text-white flex items-center justify-between px-8 text-[9px] uppercase font-black tracking-[0.2em]">
+      <footer className="min-h-10 py-2 lg:py-0 bg-black text-white flex flex-col sm:flex-row items-center justify-between px-4 lg:px-8 text-[8px] md:text-[9px] uppercase font-black tracking-[0.2em] gap-2 shrink-0">
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-2">
             <span className="w-2 h-2 bg-sketch-green rounded-full" />
@@ -707,6 +755,13 @@ export default function App() {
                     >
                       RESET POINTS
                     </button>
+                    <button 
+                      onClick={refreshGame}
+                      className="py-3 bg-sketch-red text-white text-[10px] font-black hover:bg-red-700 transition-colors col-span-2 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-y-0.5 hover:shadow-none"
+                      title="Fully restarts match, returning everyone to the lobby and resetting all scores."
+                    >
+                      REFRESH GAME (FULL RESET)
+                    </button>
                   </div>
                 </div>
 
@@ -718,18 +773,29 @@ export default function App() {
                       <span className="font-black text-sm">{p.name}</span>
                       <span className="text-[9px] font-mono opacity-40">{p.id.substring(0, 8)}</span>
                     </div>
-                    {p.id !== socket.id && (
-                      <button 
-                        onClick={() => kickPlayer(p.id)}
-                        className="bg-black text-white p-2 hover:bg-sketch-red transition-colors"
-                        title="Kick Player"
-                      >
-                        <UserMinus size={16} />
-                      </button>
-                    )}
-                    {p.id === socket.id && (
-                      <span className="text-[9px] font-black bg-sketch-green px-2 py-1">HOST</span>
-                    )}
+                    <div className="flex items-center gap-1.5">
+                      {p.id !== socket.id && (
+                        <>
+                          <button
+                            onClick={() => changeHost(p.id)}
+                            className="bg-white border-2 border-black hover:bg-sketch-yellow text-black text-[9px] font-black px-2.5 py-1.5 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none transition-all"
+                            title="Transfer Host power to this player"
+                          >
+                            MAKE HOST
+                          </button>
+                          <button 
+                            onClick={() => kickPlayer(p.id)}
+                            className="bg-black text-white p-2 border-2 border-black hover:bg-sketch-red transition-colors shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none"
+                            title="Kick Player"
+                          >
+                            <UserMinus size={16} />
+                          </button>
+                        </>
+                      )}
+                      {p.id === socket.id && (
+                        <span className="text-[9px] font-black bg-sketch-green border-2 border-black px-2.5 py-1">HOST</span>
+                      )}
+                    </div>
                   </div>
                 ))}
 
